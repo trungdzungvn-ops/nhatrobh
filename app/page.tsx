@@ -54,7 +54,7 @@ export default function App(){
   const filteredRooms=rooms.filter(r=>`${r.room_code} ${r.tenant||''} ${r.phone||''}`.toLowerCase().includes(search.toLowerCase()))
 
   async function saveRoom(e:React.FormEvent<HTMLFormElement>){
-    e.preventDefault();const f=new FormData(e.currentTarget);const existing=roomModal&&roomModal!==true?roomModal:null
+    e.preventDefault();const f=new FormData(e.currentTarget);const existing=roomModal||null
     try{
       const code=String(f.get('code')||'').trim(),rent=Number(f.get('rent')||0),deposit=Number(f.get('deposit')||0),status=String(f.get('status')||'occupied')
       const tenantName=String(f.get('tenant')||'').trim(),phone=String(f.get('phone')||'').trim()
