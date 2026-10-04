@@ -18,17 +18,47 @@ const monthLabel=(s:string)=>{const [y,m]=s.slice(0,10).split('-');return `${m}/
 const URL=process.env.NEXT_PUBLIC_SUPABASE_URL||''
 const KEY=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||''
 
+function getAccessToken(){
+  if(typeof window==='undefined') return ''
+  return localStorage.getItem('nhatro_access_token')||''
+}
+
 async function sb(path:string, options:RequestInit={}){
   if(!URL||!KEY) throw new Error('Thiếu NEXT_PUBLIC_SUPABASE_URL hoặc NEXT_PUBLIC_SUPABASE_ANON_KEY trên Vercel.')
-  const res=await fetch(`${URL}/rest/v1/${path}`,{...options,headers:{apikey:KEY,Authorization:`Bearer ${KEY}`,'Content-Type':'application/json',Prefer:options.method==='POST'?'return=representation':'return=minimal',...(options.headers||{})}})
+  const token=getAccessToken()
+  if(!token) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.')
+  const res=await fetch(`${URL}/rest/v1/${path}`,{...options,headers:{apikey:KEY,Authorization:`Bearer ${token}`,'Content-Type':'application/json',Prefer:options.method==='POST'?'return=representation':'return=minimal',...(options.headers||{})}})
   if(!res.ok) throw new Error(await res.text())
   const text=await res.text(); return text?JSON.parse(text):null
+}
+
+async function authLogin(email:string,password:string){
+  const res=await fetch(`${URL}/auth/v1/token?grant_type=password`,{
+    method:'POST',
+    headers:{apikey:KEY,'Content-Type':'application/json'},
+    body:JSON.stringify({email,password})
+  })
+  const data=await res.json()
+  if(!res.ok) throw new Error(data.error_description||data.msg||data.message||'Email hoặc mật khẩu không đúng.')
+  localStorage.setItem('nhatro_access_token',data.access_token)
+  localStorage.setItem('nhatro_user_email',email)
+  return data
+}
+
+async function authLogout(){
+  const token=getAccessToken()
+  if(token){
+    await fetch(`${URL}/auth/v1/logout`,{method:'POST',headers:{apikey:KEY,Authorization:`Bearer ${token}`}})
+  }
+  localStorage.removeItem('nhatro_access_token')
+  localStorage.removeItem('nhatro_user_email')
 }
 
 export default function App(){
   const [tab,setTab]=useState('dashboard'),[rooms,setRooms]=useState<Room[]>([]),[invoices,setInvoices]=useState<Invoice[]>([]),[meters,setMeters]=useState<Meter[]>([]),[settings,setSettings]=useState<Setting[]>([]),[summaries,setSummaries]=useState<Summary[]>([])
   const [loading,setLoading]=useState(true),[error,setError]=useState(''),[search,setSearch]=useState(''),[month,setMonth]=useState(monthKey())
   const [roomModal,setRoomModal]=useState<Room|null|false>(false),[payModal,setPayModal]=useState<Invoice|null>(null),[invoiceModal,setInvoiceModal]=useState<Room|null>(null)
+  const [authReady,setAuthReady]=useState(false),[userEmail,setUserEmail]=useState(''),[loginEmail,setLoginEmail]=useState(''),[loginPassword,setLoginPassword]=useState(''),[loginLoading,setLoginLoading]=useState(false)
   const nav=[['dashboard','🏠','Dashboard'],['rooms','🚪','Phòng & người thuê'],['meters','⚡','Điện nước'],['invoices','🧾','Hóa đơn'],['payments','💰','Thu tiền'],['reports','📊','Báo cáo'],['settings','⚙️','Cài đặt']]
 
   async function loadAll(){
@@ -47,7 +77,15 @@ export default function App(){
       setInvoices(is||[]);setMeters(ms||[]);setSettings(ss||[]);setSummaries(sum||[])
     }catch(e:any){setError(e.message||'Không tải được dữ liệu.')}finally{setLoading(false)}
   }
-  useEffect(()=>{loadAll()},[month])
+  useEffect(()=>{
+    const token=typeof window!=='undefined'?localStorage.getItem('nhatro_access_token'):null
+    const email=typeof window!=='undefined'?localStorage.getItem('nhatro_user_email')||'':''
+    setUserEmail(email)
+    setAuthReady(true)
+    if(token) loadAll()
+    else setLoading(false)
+  },[])
+  useEffect(()=>{if(authReady&&getAccessToken()) loadAll()},[month,authReady])
 
   const price=(key:string,fallback:number)=>Number(settings.find(x=>x.setting_key===key)?.setting_value??fallback)
   const stats=useMemo(()=>{const due=invoices.reduce((s,x)=>s+Number(x.total_amount||0),0),paid=invoices.reduce((s,x)=>s+Number(x.paid_amount||0),0);return{due,paid,debt:Math.max(due-paid,0),occupied:rooms.filter(r=>r.status==='occupied').length,vacant:rooms.filter(r=>r.status==='vacant').length}},[invoices,rooms])
@@ -81,8 +119,39 @@ export default function App(){
 
   async function saveSetting(key:string,value:string){try{await sb(`nhatro_settings?setting_key=eq.${key}`,{method:'PATCH',body:JSON.stringify({setting_value:value,updated_at:new Date().toISOString()})});await loadAll()}catch(e:any){setError(e.message||'Không lưu được cài đặt.')}}
 
+  async function handleLogin(e:React.FormEvent<HTMLFormElement>){
+    e.preventDefault();setLoginLoading(true);setError('')
+    try{
+      await authLogin(loginEmail.trim(),loginPassword)
+      setUserEmail(loginEmail.trim())
+      setLoginPassword('')
+      await loadAll()
+    }catch(e:any){setError(e.message||'Đăng nhập thất bại.')}finally{setLoginLoading(false)}
+  }
+
+  async function handleLogout(){
+    try{await authLogout()}catch{}
+    setUserEmail('');setRooms([]);setInvoices([]);setMeters([]);setSettings([]);setSummaries([])
+  }
+
+  if(!authReady) return <div className="loginpage"><div className="loginbox">Đang kiểm tra phiên đăng nhập...</div></div>
+
+  if(!userEmail) return <div className="loginpage">
+    <div className="loginbox">
+      <div className="loginbrand">🏠</div>
+      <h1>Nhà Trọ Manager</h1>
+      <p>Đăng nhập để xem và quản lý dữ liệu nhà trọ</p>
+      {error&&<div className="alert">⚠️ <span>{error}</span><button onClick={()=>setError('')}>×</button></div>}
+      <form onSubmit={handleLogin}>
+        <div className="field"><label>Email</label><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="admin@example.com" required autoComplete="email"/></div>
+        <div className="field"><label>Mật khẩu</label><input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="••••••••" required autoComplete="current-password"/></div>
+        <button className="btn primary loginbtn" disabled={loginLoading}>{loginLoading?'Đang đăng nhập...':'🔐 Đăng nhập'}</button>
+      </form>
+    </div>
+  </div>
+
   return <div className="app"><aside className="side"><div className="brand">🏠 <span>Nhà Trọ Manager</span></div><div className="nav">{nav.map(([id,ic,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}><span className="navicon">{ic}</span><span>{label}</span></button>)}</div></aside><main className="main">
-    <div className="top"><div><div className="title">{nav.find(x=>x[0]===tab)?.[2]}</div><div className="sub">Tháng {monthLabel(month)} · Dữ liệu Supabase</div></div><div className="topactions"><input className="month" type="month" value={month.slice(0,7)} onChange={e=>setMonth(`${e.target.value}-01`)}/><button className="btn light" onClick={loadAll}><RefreshCw size={16}/> Làm mới</button>{tab==='rooms'&&<button className="btn primary" onClick={()=>setRoomModal(null)}><Plus size={16}/> Thêm phòng</button>}</div></div>
+    <div className="top"><div><div className="title">{nav.find(x=>x[0]===tab)?.[2]}</div><div className="sub">Tháng {monthLabel(month)} · Dữ liệu Supabase</div></div><div className="topactions"><input className="month" type="month" value={month.slice(0,7)} onChange={e=>setMonth(`${e.target.value}-01`)}/><button className="btn light" onClick={loadAll}><RefreshCw size={16}/> Làm mới</button>{tab==='rooms'&&<button className="btn primary" onClick={()=>setRoomModal(null)}><Plus size={16}/> Thêm phòng</button>}<button className="btn light" onClick={handleLogout}>Đăng xuất</button></div></div>
     {error&&<div className="alert">⚠️ <span>{error}</span><button onClick={()=>setError('')}>×</button></div>}
     {loading?<div className="section"><div className="card">Đang tải dữ liệu...</div></div>:<>
       {tab==='dashboard'&&<Dashboard rooms={rooms} invoices={invoices} stats={stats} month={month} onPay={setPayModal} onGoInvoices={()=>setTab('invoices')}/>} 
