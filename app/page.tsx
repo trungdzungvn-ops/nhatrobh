@@ -111,7 +111,34 @@ function Reports({invoices,summaries,stats,month}:{invoices:Invoice[];summaries:
 
 function Settings({settings,onSave}:{settings:Setting[];onSave:(k:string,v:string)=>void}){const get=(k:string,d:string)=>settings.find(x=>x.setting_key===k)?.setting_value||d;const [ep,setEp]=useState(get('electricity_price','3500')),[wp,setWp]=useState(get('water_price','20000')), [sf,setSf]=useState(get('service_fee','0')),[dd,setDd]=useState(get('default_due_day','5'));useEffect(()=>{setEp(get('electricity_price','3500'));setWp(get('water_price','20000'));setSf(get('service_fee','0'));setDd(get('default_due_day','5'))},[settings]);return <div className="section"><div className="card"><h2>⚙️ Cài đặt tính tiền</h2><div className="formgrid"><Field label="Giá điện (đ/kWh)" name="ep" value={ep} onChange={setEp}/><Field label="Giá nước (đ/m³)" name="wp" value={wp} onChange={setWp}/><Field label="Phí dịch vụ mặc định" name="sf" value={sf} onChange={setSf}/><Field label="Ngày đến hạn" name="dd" value={dd} type="number" onChange={setDd}/></div><div className="actions"><button className="btn primary" onClick={()=>{onSave('electricity_price',ep);onSave('water_price',wp);onSave('service_fee',sf);onSave('default_due_day',dd)}}><Save size={16}/> Lưu cài đặt</button></div></div></div>}
 
-function RoomModal({room,onClose,onSave}:{room?:Room;onClose:()=>void;onSave:(e:React.FormEvent<HTMLFormElement>)=>void}){return <Modal title={room?'Sửa phòng':'Thêm phòng'} onClose={onClose}><form onSubmit={onSave}><div className="formgrid"><Field label="Mã phòng" name="code" value={room?.room_code||''} required/><Field label="Người thuê" name="tenant" value={room?.tenant||''}/><Field label="Số điện thoại" name="phone" value={room?.phone||''}/><Field label="Giá phòng" name="rent" type="number" value={String(room?.monthly_rent||2500000)}/><Field label="Tiền cọc" name="deposit" type="number" value={String(room?.deposit||2500000)}/><div className="field"><label>Trạng thái</label><select name="status" defaultValue={room?.status||'occupied'}><option value="occupied">Đang thuê</option><option value="vacant">Trống</option><option value="maintenance">Bảo trì</option></select></div></div><div className="actions"><button type="button" className="btn light" onClick={onClose}>Hủy</button><button className="btn primary"><Save size={16}/> Lưu</button></div></form></Modal>}
+function RoomModal({room,onClose,onSave}:{room?:Room;onClose:()=>void;onSave:(e:React.FormEvent<HTMLFormElement>)=>void}){
+  const [code,setCode]=useState(room?.room_code||'')
+  const [tenant,setTenant]=useState(room?.tenant||'')
+  const [phone,setPhone]=useState(room?.phone||'')
+  const [rent,setRent]=useState(String(room?.monthly_rent||2500000))
+  const [deposit,setDeposit]=useState(String(room?.deposit||2500000))
+  const [status,setStatus]=useState(room?.status||'occupied')
+  useEffect(()=>{
+    setCode(room?.room_code||'');setTenant(room?.tenant||'');setPhone(room?.phone||'')
+    setRent(String(room?.monthly_rent||2500000));setDeposit(String(room?.deposit||2500000))
+    setStatus(room?.status||'occupied')
+  },[room])
+  return <Modal title={room?'Sửa phòng':'Thêm phòng'} onClose={onClose}>
+    <form onSubmit={onSave}>
+      <div className="formgrid">
+        <Field label="Mã phòng" name="code" value={code} onChange={setCode} required/>
+        <Field label="Người thuê" name="tenant" value={tenant} onChange={setTenant}/>
+        <Field label="Số điện thoại" name="phone" value={phone} onChange={setPhone}/>
+        <Field label="Giá phòng" name="rent" type="number" value={rent} onChange={setRent}/>
+        <Field label="Tiền cọc" name="deposit" type="number" value={deposit} onChange={setDeposit}/>
+        <div className="field"><label>Trạng thái</label><select name="status" value={status} onChange={e=>setStatus(e.target.value as Room['status'])}>
+          <option value="occupied">Đang thuê</option><option value="vacant">Trống</option><option value="maintenance">Bảo trì</option>
+        </select></div>
+      </div>
+      <div className="actions"><button type="button" className="btn light" onClick={onClose}>Hủy</button><button className="btn primary"><Save size={16}/> Lưu</button></div>
+    </form>
+  </Modal>
+}
 function InvoiceModal({room,defaultService,onClose,onCreate}:{room:Room;defaultService:number;onClose:()=>void;onCreate:(x:{service:number;other:number;discount:number})=>void}){const [service,setService]=useState(String(defaultService)),[other,setOther]=useState('0'),[discount,setDiscount]=useState('0');return <Modal title={`Tạo hóa đơn — ${room.room_code}`} onClose={onClose}><p>Tiền phòng: <b>{money(room.monthly_rent)}</b></p><div className="formgrid"><Field label="Phí dịch vụ" value={service} onChange={setService} type="number"/><Field label="Phí khác" value={other} onChange={setOther} type="number"/><Field label="Giảm trừ" value={discount} onChange={setDiscount} type="number"/></div><div className="actions"><button className="btn light" onClick={onClose}>Hủy</button><button className="btn primary" onClick={()=>onCreate({service:Number(service||0),other:Number(other||0),discount:Number(discount||0)})}><Receipt size={16}/> Tạo hóa đơn</button></div></Modal>}
 function PayModal({invoice,onClose,onPay}:{invoice:Invoice;onClose:()=>void;onPay:(e:React.FormEvent<HTMLFormElement>)=>void}){const remain=Math.max(Number(invoice.total_amount)-Number(invoice.paid_amount),0);return <Modal title={`Thu tiền — ${invoice.room_code}`} onClose={onClose}><div className="paybox"><div>Tổng hóa đơn <b>{money(invoice.total_amount)}</b></div><div>Đã thu <b className="green">{money(invoice.paid_amount)}</b></div><div>Còn nợ <b className="red">{money(remain)}</b></div></div><form onSubmit={onPay}><div className="formgrid"><Field label="Số tiền thu" name="amount" type="number" value={String(remain)}/><div className="field"><label>Phương thức</label><select name="method" defaultValue="cash"><option value="cash">Tiền mặt</option><option value="transfer">Chuyển khoản</option><option value="bank">Ngân hàng</option><option value="other">Khác</option></select></div><Field label="Ghi chú" name="note"/></div><div className="actions"><button type="button" className="btn light" onClick={onClose}>Hủy</button><button className="btn primary"><CreditCard size={16}/> Xác nhận thu</button></div></form></Modal>}
 function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:React.ReactNode}){return <div className="modalbg"><div className="modal"><div className="sectionhead"><h2>{title}</h2><button className="btn light" onClick={onClose}><X size={18}/></button></div>{children}</div></div>}
