@@ -173,7 +173,105 @@ export default function App(){
     </div>
   </div>
 
-  return <div className="app"><aside className="side"><div className="brand">🏠 <span>Nhà Trọ Manager</span></div><div className="nav">{nav.map(([id,ic,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}><span className="navicon">{ic}</span><span>{label}</span></button>)}</div></aside><main className="main">
+  return <div className="app">
+<style jsx global>{`
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; }
+  body { overflow-x: hidden; }
+  button, input, select { font: inherit; }
+
+  .app { min-height: 100vh; width: 100%; display: flex; }
+  .side { flex: 0 0 220px; width: 220px; min-height: 100vh; position: sticky; top: 0; }
+  .main { flex: 1 1 auto; min-width: 0; width: calc(100% - 220px); padding: 24px; overflow-x: hidden; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .topactions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .section, .card { max-width: 100%; }
+  .tablewrap { width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table { width: 100%; min-width: 760px; }
+  .search { max-width: 100%; }
+  .search input { max-width: 100%; }
+  .rolebadge { display: inline-flex; align-items: center; white-space: nowrap; padding: 9px 12px; border-radius: 10px; background: #eef3ff; font-weight: 700; }
+
+  /* Điện thoại dọc */
+  @media (max-width: 767px) and (orientation: portrait) {
+    .app { display: block; }
+    .side {
+      position: fixed;
+      z-index: 50;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 68px;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .side .brand span,
+    .side .nav button > span:last-child { display: none; }
+    .side .brand { justify-content: center; padding: 16px 4px; }
+    .side .nav button { width: 56px; min-width: 56px; height: 52px; margin: 4px auto; padding: 0; justify-content: center; }
+    .navicon { margin: 0 !important; font-size: 22px; }
+    .main {
+      width: calc(100% - 68px);
+      margin-left: 68px;
+      padding: 14px 10px 28px;
+    }
+    .title { font-size: 25px !important; line-height: 1.15; }
+    .sub { font-size: 14px; }
+    .top { align-items: flex-start; gap: 10px; }
+    .top > div:first-child { width: 100%; }
+    .topactions { width: 100%; gap: 6px; }
+    .topactions .month { flex: 1 1 135px; min-width: 125px; }
+    .topactions .btn { min-height: 42px; }
+    .topactions .primary { flex: 1 1 120px; }
+    .rolebadge { order: 4; }
+    .grid { grid-template-columns: 1fr !important; }
+    .grid.mini { grid-template-columns: 1fr !important; }
+    .sectionhead { flex-wrap: wrap; gap: 10px; }
+    .sectionhead > * { max-width: 100%; }
+    .search { width: 100%; }
+    .search input { width: 100%; min-height: 44px; }
+    .tablewrap { margin-left: -2px; width: calc(100% + 4px); border-radius: 12px; }
+    .table { min-width: 680px; }
+    .modalbg { padding: 12px !important; align-items: flex-start !important; overflow-y: auto; }
+    .modal { width: min(100%, 560px) !important; max-height: calc(100vh - 24px); overflow-y: auto; margin-top: 4vh; }
+    .formgrid { grid-template-columns: 1fr !important; }
+    .loginpage { padding: 16px !important; }
+    .loginbox { width: min(100%, 430px) !important; }
+  }
+
+  /* Điện thoại ngang */
+  @media (max-width: 1024px) and (orientation: landscape) {
+    .side { flex-basis: 72px; width: 72px; }
+    .side .brand span,
+    .side .nav button > span:last-child { display: none; }
+    .side .brand { justify-content: center; padding: 12px 4px; }
+    .side .nav button { width: 58px; min-width: 58px; margin: 3px auto; padding: 0; justify-content: center; }
+    .navicon { margin: 0 !important; }
+    .main { width: calc(100% - 72px); padding: 14px 16px; }
+    .top { flex-wrap: nowrap; }
+    .top > div:first-child { min-width: 190px; }
+    .topactions { justify-content: flex-end; }
+    .table { min-width: 760px; }
+  }
+
+  /* Tablet */
+  @media (min-width: 768px) and (max-width: 1100px) {
+    .side { flex-basis: 180px; width: 180px; }
+    .main { width: calc(100% - 180px); padding: 18px; }
+    .grid { grid-template-columns: repeat(2, minmax(0,1fr)) !important; }
+  }
+
+  /* Màn hình rất rộng */
+  @media (min-width: 1600px) {
+    .main { padding: 30px 36px; }
+  }
+
+  /* Không cố khóa orientation bằng JS: trình duyệt sẽ tự xoay theo cài đặt Auto-Rotate. */
+  @media (orientation: landscape) {
+    .modalbg { overflow-y: auto; }
+  }
+`}</style>
+<aside className="side"><div className="brand">🏠 <span>Nhà Trọ Manager</span></div><div className="nav">{nav.map(([id,ic,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}><span className="navicon">{ic}</span><span>{label}</span></button>)}</div></aside><main className="main">
     <div className="top"><div><div className="title">{nav.find(x=>x[0]===tab)?.[2]}</div><div className="sub">Tháng {monthLabel(month)} · Dữ liệu Supabase</div></div><div className="topactions"><input className="month" type="month" value={month.slice(0,7)} onChange={e=>setMonth(`${e.target.value}-01`)}/><button className="btn light" onClick={loadAll}><RefreshCw size={16}/> Làm mới</button>{tab==='rooms'&&canEdit&&<button className="btn primary" onClick={()=>setRoomModal(null)}><Plus size={16}/> Thêm phòng</button>}<span className="rolebadge">{userRole==="admin"?"👑 Quản trị":"👁️ Chỉ xem"}</span><button className="btn light" onClick={handleLogout}>Đăng xuất</button></div></div>
     {error&&<div className="alert">⚠️ <span>{error}</span><button onClick={()=>setError('')}>×</button></div>}
     {loading?<div className="section"><div className="card">Đang tải dữ liệu...</div></div>:<>
