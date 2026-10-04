@@ -86,7 +86,7 @@ export default function App(){
     {error&&<div className="alert">⚠️ <span>{error}</span><button onClick={()=>setError('')}>×</button></div>}
     {loading?<div className="section"><div className="card">Đang tải dữ liệu...</div></div>:<>
       {tab==='dashboard'&&<Dashboard rooms={rooms} invoices={invoices} stats={stats} month={month} onPay={setPayModal} onGoInvoices={()=>setTab('invoices')}/>} 
-      {tab==='rooms'&&<Rooms rooms={filteredRooms} search={search} setSearch={setSearch} onEdit={r=>setRoomModal(r)} onAdd={()=>setRoomModal(null)} invoices={invoices}/>} 
+      {tab==='rooms'&&<Rooms rooms={filteredRooms} search={search} setSearch={setSearch} onEdit={r=>setRoomModal(r)} invoices={invoices}/>} 
       {tab==='meters'&&<Meters rooms={rooms.filter(r=>r.status==='occupied')} meters={meters} month={month} onSave={saveMeter} onCreateInvoice={r=>setInvoiceModal(r)}/>} 
       {tab==='invoices'&&<Invoices invoices={invoices} onPay={setPayModal} onGoMeters={()=>setTab('meters')}/>} 
       {tab==='payments'&&<Payments invoices={invoices} stats={stats} onPay={setPayModal}/>} 
