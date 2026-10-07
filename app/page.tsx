@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import { Plus, X, RefreshCw, Save, Search, CreditCard, Pencil, UserRound, Receipt, Trash2 } from 'lucide-react'
+import { Plus, X, RefreshCw, Save, Search, CreditCard, Pencil, UserRound, Receipt, Trash2, Download, Upload, Database } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 type Room = {
   id:string; room_code:string; room_name:string|null; monthly_rent:number; deposit:number;
@@ -27,6 +28,140 @@ const supabase = createClient(URL, KEY, {
     detectSessionInUrl: false,
   },
 })
+
+
+const EXPORT_TABLES = [
+  ['Settings','nhatro_settings'],
+  ['Rooms','nhatro_rooms'],
+  ['Tenants','nhatro_tenants'],
+  ['Contracts','nhatro_contracts'],
+  ['Meters','nhatro_meter_readings'],
+  ['Invoices','nhatro_invoices'],
+  ['InvoiceItems','nhatro_invoice_items'],
+  ['Payments','nhatro_payments'],
+] as const
+
+const IMPORT_CONFIG = [
+  {sheet:'Settings', table:'nhatro_settings', conflict:'setting_key'},
+  {sheet:'Rooms', table:'nhatro_rooms', conflict:'id'},
+  {sheet:'Tenants', table:'nhatro_tenants', conflict:'id'},
+  {sheet:'Contracts', table:'nhatro_contracts', conflict:'id'},
+  {sheet:'Meters', table:'nhatro_meter_readings', conflict:'id'},
+  {sheet:'Invoices', table:'nhatro_invoices', conflict:'id'},
+  {sheet:'InvoiceItems', table:'nhatro_invoice_items', conflict:'id'},
+  {sheet:'Payments', table:'nhatro_payments', conflict:'id'},
+] as const
+
+const IMPORT_OMIT_FIELDS:Record<string,string[]> = {
+  Rooms:[],
+  Tenants:[],
+  Contracts:[],
+  Meters:['electricity_amount','water_amount'],
+  Invoices:['total_amount'],
+  InvoiceItems:['amount'],
+  Payments:[],
+  Settings:[],
+}
+
+function excelRows(data:any[]){
+  return data.map(x=>{
+    const out:any={}
+    Object.entries(x||{}).forEach(([k,v])=>{
+      if(v===undefined) return
+      out[k]=v
+    })
+    return out
+  })
+}
+
+async function exportAllExcel(){
+  const wb=XLSX.utils.book_new()
+  const exported:any={}
+  for(const [sheet,table] of EXPORT_TABLES){
+    const rows=await sb(`${table}?select=*`)
+    exported[sheet]=rows||[]
+    const ws=XLSX.utils.json_to_sheet(excelRows(rows||[]))
+    XLSX.utils.book_append_sheet(wb,ws,sheet.slice(0,31))
+  }
+
+  const rooms=exported.Rooms||[]
+  const tenants=exported.Tenants||[]
+  const contracts=exported.Contracts||[]
+  const invoices=exported.Invoices||[]
+  const payments=exported.Payments||[]
+
+  const roomById:any=Object.fromEntries(rooms.map((r:any)=>[r.id,r]))
+  const tenantById:any=Object.fromEntries(tenants.map((t:any)=>[t.id,t]))
+  const contractByRoom:any={}
+  contracts.forEach((c:any)=>{if(c.status==='active') contractByRoom[c.room_id]=c})
+  const paidByInvoice:any={}
+  payments.forEach((p:any)=>{paidByInvoice[p.invoice_id]=(paidByInvoice[p.invoice_id]||0)+Number(p.amount||0)})
+
+  const summary=rooms.map((r:any)=>{
+    const c=contractByRoom[r.id]
+    const t=c?tenantById[c.tenant_id]:null
+    const inv=invoices.filter((i:any)=>i.room_id===r.id)
+    const due=inv.reduce((s:number,i:any)=>s+Number(i.total_amount||0),0)
+    const paid=inv.reduce((s:number,i:any)=>s+Number(i.paid_amount||0),0)
+    return {
+      room_code:r.room_code,
+      room_name:r.room_name||'',
+      status:r.status,
+      tenant:t?.full_name||'',
+      phone:t?.phone||'',
+      monthly_rent:Number(r.monthly_rent||0),
+      deposit:Number(r.deposit||0),
+      invoice_count:inv.length,
+      total_due:due,
+      total_paid:paid,
+      debt:Math.max(due-paid,0),
+      payment_records:inv.reduce((s:number,i:any)=>s+(paidByInvoice[i.id]||0),0)
+    }
+  })
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.json_to_sheet(summary),
+    'Summary'
+  )
+
+  const stamp=new Date().toISOString().slice(0,10)
+  XLSX.writeFile(wb,`NhaTroManager_Backup_${stamp}.xlsx`)
+}
+
+function normalizeImportRows(rows:any[], omit:string[]){
+  return rows.map(raw=>{
+    const out:any={}
+    Object.entries(raw||{}).forEach(([key,value])=>{
+      if(omit.includes(key)) return
+      if(value===undefined || value===null || value==='') return
+      out[key]=value
+    })
+    return out
+  }).filter(x=>Object.keys(x).length)
+}
+
+async function importAllExcel(file:File){
+  const buffer=await file.arrayBuffer()
+  const wb=XLSX.read(buffer,{type:'array',cellDates:false})
+
+  for(const cfg of IMPORT_CONFIG){
+    const ws=wb.Sheets[cfg.sheet]
+    if(!ws) continue
+    const raw=XLSX.utils.sheet_to_json(ws,{defval:null})
+    const rows=normalizeImportRows(raw,IMPORT_OMIT_FIELDS[cfg.sheet]||[])
+    if(!rows.length) continue
+
+    // Upsert theo ID / key, không xóa dữ liệu không có trong file.
+    await sb(`${cfg.table}?on_conflict=${encodeURIComponent(cfg.conflict)}`,{
+      method:'POST',
+      headers:{
+        Prefer:'resolution=merge-duplicates,return=minimal'
+      },
+      body:JSON.stringify(rows)
+    })
+  }
+}
 
 async function getAccessToken(){
   if(typeof window==='undefined') return ''
@@ -244,6 +379,42 @@ export default function App(){
     }catch(e:any){setError(e.message||'Đăng nhập thất bại.')}finally{setLoginLoading(false)}
   }
 
+
+  async function handleExportExcel(){
+    try{
+      setError('')
+      await exportAllExcel()
+    }catch(e:any){
+      setError(e.message||'Không thể xuất dữ liệu Excel.')
+    }
+  }
+
+  async function handleImportExcel(e:React.ChangeEvent<HTMLInputElement>){
+    const file=e.target.files?.[0]
+    e.currentTarget.value=''
+    if(!file) return
+    if(userRole!=='admin'){
+      setError('Tài khoản chỉ xem không được nhập dữ liệu.')
+      return
+    }
+    if(!/\.xlsx?$/i.test(file.name)){
+      setError('Vui lòng chọn file Excel .xlsx hoặc .xls.')
+      return
+    }
+    try{
+      setLoading(true)
+      setError('')
+      await importAllExcel(file)
+      await loadAll()
+      setError('') 
+      alert('Đã nhập dữ liệu Excel thành công. Dữ liệu được cập nhật theo ID/key và không xóa dữ liệu khác.')
+    }catch(e:any){
+      setError(e.message||'Không thể nhập dữ liệu Excel.')
+    }finally{
+      setLoading(false)
+    }
+  }
+
   async function handleLogout(){
     try{await authLogout()}catch{}
     setUserEmail('');setUserRole('viewer');localStorage.removeItem('nhatro_user_id');setRooms([]);setInvoices([]);setMeters([]);setSettings([]);setSummaries([])
@@ -329,6 +500,8 @@ export default function App(){
     .formgrid { grid-template-columns: 1fr !important; }
     .loginpage { padding: 16px !important; }
     .loginbox { width: min(100%, 430px) !important; }
+    .data-actions .btn { width: 100%; justify-content: center; }
+
   }
 
   /* Điện thoại ngang */
@@ -358,6 +531,13 @@ export default function App(){
     .main { padding: 30px 36px; }
   }
 
+
+  .importlabel { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .data-card { margin-top: 16px; }
+  .data-card h2 { display: flex; align-items: center; gap: 8px; }
+  .data-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .data-note { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: #f7f9fc; color: #5b6472; line-height: 1.6; font-size: 14px; }
+
   /* Không cố khóa orientation bằng JS: trình duyệt sẽ tự xoay theo cài đặt Auto-Rotate. */
   @media (orientation: landscape) {
     .modalbg { overflow-y: auto; }
@@ -373,7 +553,7 @@ export default function App(){
       {tab==='invoices'&&<Invoices invoices={invoices} onPay={setPayModal} onGoMeters={()=>setTab('meters')} canEdit={canEdit}/>} 
       {tab==='payments'&&<Payments invoices={invoices} stats={stats} onPay={setPayModal} canEdit={canEdit}/>} 
       {tab==='reports'&&<Reports invoices={invoices} summaries={summaries} stats={stats} month={month}/>} 
-      {tab==='settings'&&<Settings settings={settings} onSave={saveSetting} canEdit={canEdit}/>} 
+      {tab==='settings'&&<Settings settings={settings} onSave={saveSetting} canEdit={canEdit} onExport={handleExportExcel} onImport={handleImportExcel}/>} 
     </>}
     {roomModal!==false&&<RoomModal room={roomModal||undefined} onClose={()=>setRoomModal(false)} onSave={saveRoom}/>} 
     {invoiceModal&&<InvoiceModal room={invoiceModal} defaultService={price('service_fee',0)} onClose={()=>setInvoiceModal(null)} onCreate={x=>createInvoice(invoiceModal,x)}/>} 
@@ -391,7 +571,76 @@ function Invoices({invoices,onPay,onGoMeters,canEdit}:{invoices:Invoice[];onPay:
 function Payments({invoices,stats,onPay,canEdit}:{invoices:Invoice[];stats:any;onPay:(x:Invoice)=>void;canEdit:boolean}){return <div className="section"><div className="grid"><Stat l="Tổng phải thu" v={money(stats.due)} c="blue"/><Stat l="Đã thu" v={money(stats.paid)} c="green"/><Stat l="Còn nợ" v={money(stats.debt)} c="red"/><Stat l="Hóa đơn" v={invoices.length.toString()} c="orange"/></div><div className="section"><InvoiceTable invoices={invoices} onPay={onPay} canEdit={canEdit}/></div></div>}
 function Reports({invoices,summaries,stats,month}:{invoices:Invoice[];summaries:Summary[];stats:any;month:string}){const s=summaries.slice(0,12);return <div className="section"><div className="grid"><Stat l="Tổng phải thu" v={money(stats.due)} c="blue"/><Stat l="Đã thu" v={money(stats.paid)} c="green"/><Stat l="Còn nợ" v={money(stats.debt)} c="red"/><Stat l="Tỷ lệ thu" v={stats.due?Math.round(stats.paid/stats.due*100)+'%':'0%'} c="green"/></div><div className="section"><div className="card"><h2>Chi tiết tháng {monthLabel(month)}</h2><div className="reportlist"><p>Tiền phòng <b>{money(invoices.reduce((x,i)=>x+Number(i.room_amount),0))}</b></p><p>Tiền điện <b>{money(invoices.reduce((x,i)=>x+Number(i.electricity_amount),0))}</b></p><p>Tiền nước <b>{money(invoices.reduce((x,i)=>x+Number(i.water_amount),0))}</b></p><p>Phí khác <b>{money(invoices.reduce((x,i)=>x+Number(i.service_amount)+Number(i.other_amount),0))}</b></p></div></div></div><div className="section"><div className="card"><h2>12 tháng gần nhất</h2><div className="tablewrap"><table className="table"><thead><tr><th>Tháng</th><th>Hóa đơn</th><th>Phải thu</th><th>Đã thu</th><th>Còn nợ</th></tr></thead><tbody>{s.map(x=><tr key={x.month}><td>{monthLabel(x.month)}</td><td>{x.invoice_count}</td><td>{money(x.total_amount)}</td><td className="green">{money(x.paid_amount)}</td><td className="red">{money(x.debt_amount)}</td></tr>)}</tbody></table></div></div></div></div>}
 
-function Settings({settings,onSave,canEdit}:{settings:Setting[];onSave:(k:string,v:string)=>void;canEdit:boolean}){const get=(k:string,d:string)=>settings.find(x=>x.setting_key===k)?.setting_value||d;const [ep,setEp]=useState(get('electricity_price','3500')),[wp,setWp]=useState(get('water_price','20000')), [sf,setSf]=useState(get('service_fee','0')),[dd,setDd]=useState(get('default_due_day','5'));useEffect(()=>{setEp(get('electricity_price','3500'));setWp(get('water_price','20000'));setSf(get('service_fee','0'));setDd(get('default_due_day','5'))},[settings]);return <div className="section"><div className="card"><h2>⚙️ Cài đặt tính tiền</h2><div className="formgrid"><Field label="Giá điện (đ/kWh)" name="ep" value={ep} onChange={setEp} readOnly={!canEdit}/><Field label="Giá nước (đ/m³)" name="wp" value={wp} onChange={setWp} readOnly={!canEdit}/><Field label="Phí dịch vụ mặc định" name="sf" value={sf} onChange={setSf} readOnly={!canEdit}/><Field label="Ngày đến hạn" name="dd" value={dd} type="number" onChange={setDd} readOnly={!canEdit}/></div><div className="actions">{canEdit&&<button className="btn primary" onClick={()=>{onSave('electricity_price',ep);onSave('water_price',wp);onSave('service_fee',sf);onSave('default_due_day',dd)}}><Save size={16}/> Lưu cài đặt</button>}</div></div></div>}
+function Settings({settings,onSave,canEdit,onExport,onImport}:{settings:Setting[];onSave:(k:string,v:string)=>void;canEdit:boolean;onExport:()=>void;onImport:(e:React.ChangeEvent<HTMLInputElement>)=>void}){
+  const get=(k:string,d:string)=>settings.find(x=>x.setting_key===k)?.setting_value||d
+  const [ep,setEp]=useState(get('electricity_price','3500'))
+  const [wp,setWp]=useState(get('water_price','20000'))
+  const [sf,setSf]=useState(get('service_fee','0'))
+  const [dd,setDd]=useState(get('default_due_day','5'))
+
+  useEffect(()=>{
+    setEp(get('electricity_price','3500'))
+    setWp(get('water_price','20000'))
+    setSf(get('service_fee','0'))
+    setDd(get('default_due_day','5'))
+  },[settings])
+
+  return <div className="section">
+    <div className="card">
+      <h2>⚙️ Cài đặt tính tiền</h2>
+      <div className="formgrid">
+        <Field label="Giá điện (đ/kWh)" name="ep" value={ep} onChange={setEp} readOnly={!canEdit}/>
+        <Field label="Giá nước (đ/m³)" name="wp" value={wp} onChange={setWp} readOnly={!canEdit}/>
+        <Field label="Phí dịch vụ mặc định" name="sf" value={sf} onChange={setSf} readOnly={!canEdit}/>
+        <Field label="Ngày đến hạn" name="dd" value={dd} type="number" onChange={setDd} readOnly={!canEdit}/>
+      </div>
+      <div className="actions">
+        {canEdit&&<button className="btn primary" onClick={()=>{
+          onSave('electricity_price',ep)
+          onSave('water_price',wp)
+          onSave('service_fee',sf)
+          onSave('default_due_day',dd)
+        }}><Save size={16}/> Lưu cài đặt</button>}
+      </div>
+    </div>
+
+    <div className="card data-card">
+      <div className="sectionhead">
+        <div>
+          <h2><Database size={20}/> Quản lý dữ liệu</h2>
+          <div className="sub">Sao lưu hoặc phục hồi toàn bộ dữ liệu nhà trọ bằng một file Excel.</div>
+        </div>
+      </div>
+
+      <div className="data-actions">
+        <button className="btn light" onClick={onExport}>
+          <Download size={16}/> Xuất toàn bộ Excel
+        </button>
+
+        {canEdit&&<label className="btn primary importlabel">
+          <Upload size={16}/> Nhập dữ liệu Excel
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            hidden
+            onChange={onImport}
+          />
+        </label>}
+      </div>
+
+      <div className="data-note">
+        <b>File Excel gồm:</b> Settings, Rooms, Tenants, Contracts, Meters,
+        Invoices, InvoiceItems, Payments và Summary.
+        <br/>
+        Import dùng chế độ <b>upsert</b>: cập nhật bản ghi có cùng ID/key và
+        thêm bản ghi mới; <b>không xóa</b> dữ liệu khác đang có trong hệ thống.
+        {canEdit
+          ? ' Chỉ Admin được phép Import.'
+          : ' Bạn đang ở chế độ Chỉ xem nên không thể Import.'}
+      </div>
+    </div>
+  </div>
+}
 
 function RoomModal({room,onClose,onSave}:{room?:Room;onClose:()=>void;onSave:(e:React.FormEvent<HTMLFormElement>)=>void}){
   const [code,setCode]=useState(room?.room_code||'')
