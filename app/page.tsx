@@ -331,7 +331,15 @@ export default function App(){
       listener.subscription.unsubscribe()
     }
   },[])
-  useEffect(()=>{if(authReady&&getAccessToken()) loadAll()},[month,authReady])
+  useEffect(()=>{
+    if(!authReady) return
+    let cancelled=false
+    ;(async()=>{
+      const token=await getAccessToken()
+      if(token && !cancelled) await loadAll()
+    })()
+    return ()=>{cancelled=true}
+  },[month,authReady])
 
   const price=(key:string,fallback:number)=>Number(settings.find(x=>x.setting_key===key)?.setting_value??fallback)
   const canEdit=userRole==='admin'
