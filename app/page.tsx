@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { createClient } from '@supabase/supabase-js'
 import { Plus, X, RefreshCw, Save, Search, CreditCard, Pencil, UserRound, Receipt, Trash2 } from 'lucide-react'
 
 type Room = {
@@ -19,56 +20,100 @@ const monthLabel=(s:string)=>{const [y,m]=s.slice(0,10).split('-');return `${m}/
 const URL=process.env.NEXT_PUBLIC_SUPABASE_URL||''
 const KEY=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||''
 
-function getAccessToken(){
+const supabase = createClient(URL, KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false,
+  },
+})
+
+async function getAccessToken(){
   if(typeof window==='undefined') return ''
-  return localStorage.getItem('nhatro_access_token')||''
+  const {data,error}=await supabase.auth.getSession()
+  if(error) throw new Error(`Không đọc được phiên đăng nhập: ${error.message}`)
+  return data.session?.access_token||''
 }
 
 async function sb(path:string, options:RequestInit={}){
   if(!URL||!KEY) throw new Error('Thiếu NEXT_PUBLIC_SUPABASE_URL hoặc NEXT_PUBLIC_SUPABASE_ANON_KEY trên Vercel.')
-  const token=getAccessToken()
+  const token=await getAccessToken()
   if(!token) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.')
-  const res=await fetch(`${URL}/rest/v1/${path}`,{...options,headers:{apikey:KEY,Authorization:`Bearer ${token}`,'Content-Type':'application/json',Prefer:options.method==='POST'?'return=representation':'return=minimal',...(options.headers||{})}})
-  if(!res.ok) throw new Error(await res.text())
-  const text=await res.text(); return text?JSON.parse(text):null
+
+  const res=await fetch(`${URL}/rest/v1/${path}`,{
+    ...options,
+    headers:{
+      apikey:KEY,
+      Authorization:`Bearer ${token}`,
+      'Content-Type':'application/json',
+      Prefer:options.method==='POST'?'return=representation':'return=minimal',
+      ...(options.headers||{})
+    }
+  })
+
+  if(!res.ok){
+    let message=''
+    try{
+      const body=await res.json()
+      message=body?.message||body?.hint||body?.details||JSON.stringify(body)
+    }catch{
+      message=await res.text()
+    }
+    throw new Error(`Supabase REST ${res.status}: ${message||res.statusText}`)
+  }
+
+  const responseText=await res.text()
+  return responseText?JSON.parse(responseText):null
 }
 
 async function authLogin(email:string,password:string){
-  const res=await fetch(`${URL}/auth/v1/token?grant_type=password`,{
-    method:'POST',
-    headers:{apikey:KEY,'Content-Type':'application/json'},
-    body:JSON.stringify({email,password})
+  if(!URL||!KEY) throw new Error('Thiếu cấu hình Supabase trên Vercel.')
+
+  const {data,error}=await supabase.auth.signInWithPassword({
+    email,
+    password,
   })
-  const data=await res.json()
-  if(!res.ok) throw new Error(data.error_description||data.msg||data.message||'Email hoặc mật khẩu không đúng.')
-  localStorage.setItem('nhatro_access_token',data.access_token)
-  localStorage.setItem('nhatro_user_email',email)
+
+  if(error){
+    const msg=error.message||''
+    if(/invalid login credentials/i.test(msg)) throw new Error('Email hoặc mật khẩu không đúng.')
+    if(/email not confirmed/i.test(msg)) throw new Error('Email chưa được xác nhận trong Supabase Auth.')
+    throw new Error(`Đăng nhập thất bại: ${msg}`)
+  }
+
+  if(!data.session||!data.user){
+    throw new Error('Supabase không trả về phiên đăng nhập.')
+  }
+
+  localStorage.setItem('nhatro_access_token',data.session.access_token)
+  localStorage.setItem('nhatro_user_email',data.user.email||email)
+  localStorage.setItem('nhatro_user_id',data.user.id)
+
   return data
 }
 
 async function authLogout(){
-  const token=getAccessToken()
-  if(token){
-    await fetch(`${URL}/auth/v1/logout`,{method:'POST',headers:{apikey:KEY,Authorization:`Bearer ${token}`}})
+  try{
+    await supabase.auth.signOut()
+  }finally{
+    if(typeof window!=='undefined'){
+      localStorage.removeItem('nhatro_access_token')
+      localStorage.removeItem('nhatro_user_email')
+      localStorage.removeItem('nhatro_user_id')
+    }
   }
-  localStorage.removeItem('nhatro_access_token')
-  localStorage.removeItem('nhatro_user_email')
 }
 
 async function getMyRole(){
-  const token=getAccessToken()
-  if(!token) return 'viewer' as UserRole
-  const res=await fetch(`${URL}/rest/v1/nhatro_user_roles?select=role&user_id=eq.${encodeURIComponent(getUserId())}&limit=1`,{
-    headers:{apikey:KEY,Authorization:`Bearer ${token}`,'Content-Type':'application/json'}
-  })
-  if(!res.ok) return 'viewer' as UserRole
-  const rows=await res.json()
-  return (rows?.[0]?.role==='admin'?'admin':'viewer') as UserRole
-}
+  const {data,error}=await supabase.auth.getUser()
+  if(error||!data.user) return 'viewer' as UserRole
 
-function getUserId(){
-  if(typeof window==='undefined') return ''
-  return localStorage.getItem('nhatro_user_id')||''
+  try{
+    const rows=await sb(`nhatro_user_roles?select=role&user_id=eq.${encodeURIComponent(data.user.id)}&limit=1`)
+    return (rows?.[0]?.role==='admin'?'admin':'viewer') as UserRole
+  }catch{
+    return 'viewer' as UserRole
+  }
 }
 
 export default function App(){
@@ -95,11 +140,61 @@ export default function App(){
     }catch(e:any){setError(e.message||'Không tải được dữ liệu.')}finally{setLoading(false)}
   }
   useEffect(()=>{
-    const token=typeof window!=='undefined'?localStorage.getItem('nhatro_access_token'):null
-    const email=typeof window!=='undefined'?localStorage.getItem('nhatro_user_email')||'':''
-    setUserEmail(email)
-    if(token){ getMyRole().then(setUserRole).finally(()=>setAuthReady(true)); loadAll() }
-    else {setAuthReady(true);setLoading(false)}
+    let mounted=true
+
+    async function initAuth(){
+      try{
+        const {data,error}=await supabase.auth.getSession()
+        if(error) throw error
+
+        if(data.session?.user){
+          const email=data.session.user.email||''
+          localStorage.setItem('nhatro_access_token',data.session.access_token)
+          localStorage.setItem('nhatro_user_email',email)
+          localStorage.setItem('nhatro_user_id',data.session.user.id)
+          if(!mounted) return
+          setUserEmail(email)
+          const role=await getMyRole()
+          if(!mounted) return
+          setUserRole(role)
+          await loadAll()
+        }else{
+          if(mounted){
+            setUserEmail('')
+            setLoading(false)
+          }
+        }
+      }catch(e:any){
+        if(mounted){
+          setUserEmail('')
+          setLoading(false)
+          setError(e.message||'Không thể kết nối Supabase.')
+        }
+      }finally{
+        if(mounted) setAuthReady(true)
+      }
+    }
+
+    initAuth()
+
+    const {data:listener}=supabase.auth.onAuthStateChange((_event,session)=>{
+      if(!mounted) return
+      if(session?.user){
+        setUserEmail(session.user.email||'')
+        setUserRole('viewer')
+        localStorage.setItem('nhatro_access_token',session.access_token)
+        localStorage.setItem('nhatro_user_email',session.user.email||'')
+        localStorage.setItem('nhatro_user_id',session.user.id)
+      }else{
+        setUserEmail('')
+        setUserRole('viewer')
+      }
+    })
+
+    return ()=>{
+      mounted=false
+      listener.subscription.unsubscribe()
+    }
   },[])
   useEffect(()=>{if(authReady&&getAccessToken()) loadAll()},[month,authReady])
 
@@ -140,14 +235,11 @@ export default function App(){
     e.preventDefault();setLoginLoading(true);setError('')
     try{
       const auth=await authLogin(loginEmail.trim(),loginPassword)
-      try{
-        const payload=JSON.parse(atob(auth.access_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')))
-        localStorage.setItem('nhatro_user_id',payload.sub||'')
-      }catch{}
       const role=await getMyRole()
       setUserRole(role)
-      setUserEmail(loginEmail.trim())
+      setUserEmail(auth.user?.email||loginEmail.trim())
       setLoginPassword('')
+      setError('')
       await loadAll()
     }catch(e:any){setError(e.message||'Đăng nhập thất bại.')}finally{setLoginLoading(false)}
   }
