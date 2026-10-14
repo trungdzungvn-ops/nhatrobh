@@ -85,7 +85,6 @@ export default function HomePage() {
           </p>
           <div className="hero-actions">
             <a className="primary-btn" href="#thong-tin">Xem thông tin</a>
-            <Link className="secondary-btn" href="/admin">Khu vực quản lý</Link>
           </div>
         </div>
         <div className="hero-art" aria-label="Minh họa ngôi nhà">
