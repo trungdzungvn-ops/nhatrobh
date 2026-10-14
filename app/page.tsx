@@ -433,7 +433,7 @@ export default function App(){
   if(!userEmail) return <div className="loginpage">
     <div className="loginbox">
       <div className="loginbrand">🏠</div>
-      <h1>Nhà Trọ Manager</h1>
+      <h1>Nhà Trọ gần Bệnh Viện Thánh Tâm</h1>
       <p>Đăng nhập để xem và quản lý dữ liệu nhà trọ</p>
       {error&&<div className="alert">⚠️ <span>{error}</span><button onClick={()=>setError('')}>×</button></div>}
       <form onSubmit={handleLogin}>
@@ -551,7 +551,7 @@ export default function App(){
     .modalbg { overflow-y: auto; }
   }
 `}</style>
-<aside className="side"><div className="brand">🏠 <span>Nhà Trọ Manager</span></div><div className="nav">{nav.map(([id,ic,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}><span className="navicon">{ic}</span><span>{label}</span></button>)}</div></aside><main className="main">
+<aside className="side"><div className="brand">🏠 <span>Nhà Trọ gần Bệnh Viện Thánh Tâm</span></div><div className="nav">{nav.map(([id,ic,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}><span className="navicon">{ic}</span><span>{label}</span></button>)}</div></aside><main className="main">
     <div className="top"><div><div className="title">{nav.find(x=>x[0]===tab)?.[2]}</div><div className="sub">Tháng {monthLabel(month)} · Dữ liệu Supabase</div></div><div className="topactions"><input className="month" type="month" value={month.slice(0,7)} onChange={e=>setMonth(`${e.target.value}-01`)}/><button className="btn light" onClick={loadAll}><RefreshCw size={16}/> Làm mới</button>{tab==='rooms'&&canEdit&&<button className="btn primary" onClick={()=>setRoomModal(null)}><Plus size={16}/> Thêm phòng</button>}<span className="rolebadge">{userRole==="admin"?"👑 Quản trị":"👁️ Chỉ xem"}</span><button className="btn light" onClick={handleLogout}>Đăng xuất</button></div></div>
     {error&&<div className="alert">⚠️ <span>{error}</span><button onClick={()=>setError('')}>×</button></div>}
     {loading?<div className="section"><div className="card">Đang tải dữ liệu...</div></div>:<>
